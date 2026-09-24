@@ -500,19 +500,19 @@ compileFunDef name t bindings e =
 compileBuiltin :: (MonadLeanCompile m) => DecidabilityBuiltin -> [Arg DecidabilityBuiltin] -> m Code
 compileBuiltin b args = case b of
   StandardBuiltinType t -> case t of
-    BoolType -> return $ compileType (UniverseLevel 0)
-    -- For the Rocq backend, rationals are promoted to reals
-    RatType -> return $ annotateConstant [MathcompImport Reals] "R"
-    UnitType -> return $ annotateConstant [] "unit"
-    NatType -> return $ annotateConstant [] "nat"
-    ListType -> compileApplication [MathcompImport Boot] "seq" args
+    BoolType -> return "Bool"
+    -- For the Lean backend, rationals are promoted to reals
+    RatType -> return "Real"
+    UnitType -> return "Unit"
+    NatType -> return "Nat"
+    ListType -> compileApplication [] "List" args
     TensorType -> compileTensorType args
     IndexType -> compileNotationAndArgs [MathcompImport Boot] NotAssociative Nothing "'I_$0" (Just "ordinal") args
     VectorType -> compileNotationAndArgs [MathcompImport Boot] NotAssociative (Just 2) "$0.-tuple $1" Nothing args
   StandardBuiltinConstructor c -> case c of
-    Nil -> return $ annotateConstant [MathcompImport Boot] "nil"
-    Cons -> compileNotationAndArgs [MathcompImport Boot] RightAssociative (Just 60) "$0 :: $1" (Just "cons") args
-    UnitLiteral -> return $ annotateConstant [] "tt"
+    Nil -> return "[]"
+    Cons -> compileNotationAndArgs [] RightAssociative (Just 60) "$0 :: $1" (Just "cons") args
+    UnitLiteral -> return "()"
     IndexLiteral n -> return $ compileIndexLiteral n
     NatLiteral n -> return $ compileNatLiteral n
     NatTensorLiteral t -> return $ compileTensorLiteral compileNatLiteral t
@@ -522,24 +522,24 @@ compileBuiltin b args = case b of
   StandardBuiltinFunction f -> case f of
     And -> compileNotationAndArgs [] LeftAssociative (Just 40) "$0 && $1" (Just "andb") args
     Or -> compileNotationAndArgs [] LeftAssociative (Just 50) "$0 || $1" (Just "orb") args
-    Not -> compileNotationAndArgs [MathcompImport Boot] RightAssociative (Just 35) "~~ $0" (Just "negb") args
-    Implies -> compileNotationAndArgs [MathcompImport Boot] RightAssociative (Just 55) "$0 ==> $1" (Just "implb") args
-    Add AddNat -> compileNotationAndArgs [MathcompImport Algebra, Open RingScope] LeftAssociative (Just 50) "$0 + $1" (Just "+%R") args
-    Mul MulNat -> compileNotationAndArgs [MathcompImport Algebra, Open RingScope] LeftAssociative (Just 40) "$0 * $1" (Just "*%R") args
-    Add AddRatTensor -> compileNotationAndArgs [MathcompImport Algebra] LeftAssociative (Just 50) "$0 + $1" (Just "+%R") args
-    Sub SubRatTensor -> compileNotationAndArgs [MathcompImport Algebra] LeftAssociative (Just 50) "$0 - $1" Nothing args
-    Mul MulRatTensor -> compileNotationAndArgs [MathcompImport Algebra] LeftAssociative (Just 40) "$0 * $1" (Just "*%R") args
-    Div DivRatTensor -> compileNotationAndArgs [MathcompImport Algebra] LeftAssociative (Just 40) "$0 / $1" Nothing args
-    Neg NegRatTensor -> compileNotationAndArgs [MathcompImport Algebra] RightAssociative (Just 35) "- $0" (Just "-%R") args
-    Min MinRatTensor -> compileApplication [MathcompImport Algebra, Import OrderDef] "min" args
-    Max MaxRatTensor -> compileApplication [MathcompImport Algebra, Import OrderDef] "max" args
+    Not -> compileNotationAndArgs [] RightAssociative (Just 35) "! $0" (Just "negb") args
+    Implies -> compileNotationAndArgs [] RightAssociative (Just 55) "$0 -> $1" (Just "implb") args
+    Add AddNat -> compileNotationAndArgs [] LeftAssociative (Just 50) "$0 + $1" Nothing args
+    Mul MulNat -> compileNotationAndArgs [] LeftAssociative (Just 40) "$0 * $1" Nothing args
+    Add AddRatTensor -> compileNotationAndArgs [] LeftAssociative (Just 50) "$0 + $1" Nothing args
+    Sub SubRatTensor -> compileNotationAndArgs [] LeftAssociative (Just 50) "$0 - $1" Nothing args
+    Mul MulRatTensor -> compileNotationAndArgs [] LeftAssociative (Just 40) "$0 * $1" Nothing args
+    Div DivRatTensor -> compileNotationAndArgs [] LeftAssociative (Just 40) "$0 / $1" Nothing args
+    Neg NegRatTensor -> compileNotationAndArgs [] RightAssociative (Just 35) "- $0" Nothing args
+    Min MinRatTensor -> compileApplication [] "min" args
+    Max MaxRatTensor -> compileApplication [] "max" args
     CompareIndex op -> compileComparison CIndex op args
     CompareNat op -> compileComparison CNat op args
     CompareRatTensor op -> case decideIfPointwiseOrReductionComparison args of
       Pointwise as -> compileComparison CRatTensor op as
       Reduced as ->
         compileApplication
-          [VehicleImport VehicleUtils]
+          []
           ( case op of
               Le -> "leRatTensorReduced"
               Lt -> "ltRatTensorReduced"
@@ -549,25 +549,25 @@ compileBuiltin b args = case b of
               Ne -> "neRatTensorReduced"
           )
           as
-    FoldList -> compileApplication [MathcompImport Boot] "foldr" args
-    MapList -> compileApplication [MathcompImport Boot] "map" args
-    ReverseList -> compileApplication [MathcompImport Boot] "rev" args
+    FoldList -> compileApplication [] "foldr" args
+    MapList -> compileApplication [] "map" args
+    ReverseList -> compileApplication [] "rev" args
     AppendList {} -> unsupportedError
-    ReduceAndTensor -> compileApplication [VehicleImport VehicleUtils] "reduceAnd" args
-    ReduceOrTensor -> compileApplication [VehicleImport VehicleUtils] "reduceOr" args
+    ReduceAndTensor -> compileApplication [] "reduceAnd" args
+    ReduceOrTensor -> compileApplication [] "reduceOr" args
     ReduceAddRatTensor -> compileApplication [] "reduceAdd" args
     ReduceMinRatTensor -> unsupportedError
     ReduceMaxRatTensor -> unsupportedError
     ReduceMulRatTensor -> compileApplication [] "reduceMul" args
-    ConstTensor -> compileApplication [MathcompImport Algebra] "const_t" args
+    ConstTensor -> compileApplication [] "const_t" args
     QuantifyRatTensor q -> compileQuantifierFunction q args
-    AtTensor -> compileNotationAndArgs [MathcompImport Algebra, Open RingScope] NotAssociative (Just 30) "$0 ^^ $1" (Just "nindex") args
-    If -> compileNotationAndArgs [MathcompImport Boot] NotAssociative (Just 200) "if $0 then $1 else $2" Nothing args
-    ForeachTensor -> compileApplication [MathcompImport Algebra] "nstack" args
+    AtTensor -> compileNotationAndArgs [] NotAssociative (Just 30) "$0 ^^ $1" (Just "nindex") args
+    If -> compileNotationAndArgs [] NotAssociative (Just 200) "if $0 then $1 else $2" Nothing args
+    ForeachTensor -> compileApplication [] "nstack" args
     StackTensor -> compileStack args
-    Transpose -> compileApplication [VehicleImport VehicleUtils] "transpose_t" args
-    AtVector -> compileApplication [MathcompImport Boot] "tnth" args
-    ForeachVector -> compileApplication [VehicleImport VehicleUtils] "foreachTuple" args
+    Transpose -> compileApplication [] "transpose_t" args
+    AtVector -> compileApplication [] "tnth" args
+    ForeachVector -> compileApplication [] "foreachTuple" args
     QuantifyRecord q -> compileQuantifierFunction q args
     SearchRatTensor {} -> unsupportedError
     WhereTensor {} -> unsupportedError
@@ -579,9 +579,9 @@ compileBuiltin b args = case b of
     PropType -> return $ annotateConstant [] "Prop"
     PropTrue -> return $ annotateConstant [] "True"
     PropFalse -> return $ annotateConstant [] "False"
-    PropNot -> compileNotationAndArgs [] RightAssociative (Just 75) "~ $0" (Just "not") args
-    PropAnd -> compileNotationAndArgs [] RightAssociative (Just 80) "$0 /\\ $1" (Just "and") args
-    PropOr -> compileNotationAndArgs [] RightAssociative (Just 85) "$0 \\/ $1" (Just "or") args
+    PropNot -> compileNotationAndArgs [] RightAssociative (Just 75) "¬ $0" (Just "not") args
+    PropAnd -> compileNotationAndArgs [] RightAssociative (Just 80) "$0 ∧ $1" (Just "and") args
+    PropOr -> compileNotationAndArgs [] RightAssociative (Just 85) "$0 ∨ $1" (Just "or") args
     PropImplies -> compileFunctionType args
     PropCompareIndex op -> compileComparison CIndex op args
     PropCompareNat op -> compileComparison CNat op args
@@ -589,11 +589,11 @@ compileBuiltin b args = case b of
     BoolTensorToProp -> monoError
     BoolVectorToProp -> monoError
     PropQuantifyIndex q -> case q of
-      Forall -> compileApplication [VehicleImport VehicleUtils] "forallIndex" args
-      Exists -> compileApplication [VehicleImport VehicleUtils] "existsIndex" args
+      Forall -> compileApplication [] "forallIndex" args
+      Exists -> compileApplication [] "existsIndex" args
     PropQuantifyInList q -> case q of
-      Forall -> compileApplication [VehicleImport VehicleUtils] "forallInList" args
-      Exists -> compileApplication [VehicleImport VehicleUtils] "existsInList" args
+      Forall -> compileApplication [] "forallInList" args
+      Exists -> compileApplication [] "existsInList" args
     PropNaryProduct -> unsupportedError
     PropNaryProductForeach -> unsupportedError
     PropNaryProductAt -> unsupportedError
@@ -705,7 +705,8 @@ compileIndexLiteral i =
     (pretty i)
 
 compileNatLiteral :: Int -> Code
-compileNatLiteral i = annotateConstant [MathcompImport Boot] $ pretty i <> "%N"
+compileNatLiteral i =
+  annotateConstant [] (pretty i)
 
 -- | Compile a tensor type using mathcomp's shorthand notations:
 -- 'sT[R] for the scalar 0-dim case, 'nT[R]_[n1, .., nk] otherwise.
@@ -768,9 +769,9 @@ compileRealLiteral = \case
   Finite r -> do
     let num = pretty $ numerator r
     let denom = pretty $ denominator r
-    let rat = (if denominator r == 1 then num else num <+> "/" <+> denom) <+> ":" <+> "R"
-    parens $ annotate ([MathcompImport Reals, MathcompImport Algebra, Open RingScope], Nothing) rat
-  _ -> developerError "Compiling infinite values to Rocq not supported"
+    let rat = if denominator r == 1 then num else num <+> "/" <+> denom
+    parens rat
+  _ -> developerError "Compiling infinite values to Lean not supported"
 
 compileLam :: (MonadLeanCompile m) => Binder DecidabilityBuiltin -> Expr DecidabilityBuiltin -> m Code
 compileLam binder expr = do
@@ -785,7 +786,7 @@ data ComparisonDomain
   deriving (Eq)
 
 compileComparison :: (MonadLeanCompile m) => ComparisonDomain -> ComparisonOp -> [Arg DecidabilityBuiltin] -> m Code
-compileComparison domain op = do
+compileComparison domain op args = do
   let (opDoc, dependencies) = case op of
         Le -> ("<=", orderDeps)
         Lt -> ("<", orderDeps)
@@ -794,19 +795,19 @@ compileComparison domain op = do
         Eq -> ("==", eqDeps)
         Ne -> ("!=", eqDeps)
   let typeDeps = case (domain, op) of
-        (CIndex, _) -> [MathcompImport Boot]
-        (CNat, _) -> [MathcompImport Boot]
-        (CRatTensor, Eq) -> [MathcompImport Algebra]
-        (CRatTensor, Ne) -> [MathcompImport Algebra]
-        (CRatTensor, _) -> [MathcompImport Algebra]
+        (CIndex, _) -> []
+        (CNat, _) -> []
+        (CRatTensor, Eq) -> []
+        (CRatTensor, Ne) -> []
+        (CRatTensor, _) -> []
   let (opDoc', dependencies') =
         if domain == CIndex || domain == CNat
-          then ("($0 " <> opDoc <> " $1)%N", dependencies ++ [MathcompImport Boot])
+          then ("$0 " <> opDoc <> " $1", dependencies)
           else ("$0 " <> opDoc <> " $1", dependencies)
-  compileNotationAndArgs (dependencies' <> typeDeps) NotAssociative (Just 70) opDoc' Nothing
+  compileNotationAndArgs (dependencies' <> typeDeps) NotAssociative (Just 70) opDoc' Nothing args
   where
-    orderDeps = [VehicleImport VehicleUtils, MathcompImport Boot, Open OrderScope]
-    eqDeps = [MathcompImport Boot]
+    orderDeps = []
+    eqDeps = []
 
 compileStack :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 compileStack args = do
