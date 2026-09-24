@@ -293,8 +293,8 @@ compileDecl opts = \case
   DefFunction p n funSort t e -> case funSort of
     TypeDecl binderCount -> Just <$> compileFunctionDecl n binderCount t e
     FunctionDecl binderCount Nothing -> Just <$> compileFunctionDecl n binderCount t e
-    FunctionDecl _ (Just AnnProperty) -> Just <$> compileProperty opts n e
-    FunctionDecl _ (Just AnnInstance {}) -> throwError $ UnimplementedFeature p "Compiling instances to Rocq"
+    FunctionDecl _ (Just AnnProperty) -> Just <$> compileProperty opts n t e
+    FunctionDecl _ (Just AnnInstance {}) -> throwError $ UnimplementedFeature p "Compiling instances to Lean"
     ProjectionDecl {} -> return Nothing
     TensorCoercionDecl binderCount -> Just <$> compileFunctionDecl n binderCount t e
   DefRecord p n _ telescope fields _supports ->
@@ -324,18 +324,17 @@ compileRecordDecl ::
 compileRecordDecl p ident telescope fields = do
   t' <-
     if null telescope
-      then return (compileType 0)
-      else throwError $ UnimplementedFeature p "Compiling parameterised records to Rocq"
+      then return (compileType (UniverseLevel 0))
+      else throwError $ UnimplementedFeature p "Compiling parameterised records to Lean"
   fs' <- traverseRecordFields compileExpr fields
   return $
-    "Record"
+    "structure"
       <+> compileIdentifier ident
       <+> ":"
       <+> t'
-      <+> ":="
+      <+> "where"
       <> line
-      <> indent 2 (encloseSep (lbrace <> space) (line <> rbrace) (semi <> space) $ fmap (\(field, fieldType) -> pretty field <+> ":" <+> fieldType) fs')
-      <> "."
+      <> indent 2 (vsep $ fmap (\(field, fieldType) -> pretty field <+> ":" <+> fieldType) fs')
 
 extractDeclBinders ::
   LHSBinderCount ->
@@ -361,7 +360,7 @@ compilePostulate ::
 compilePostulate ident t = do
   let name = compileIdentifier ident
   typ <- compileExpr t
-  return $ "Parameter" <+> name <+> ":" <+> align typ <> "."
+  return $ "axiom" <+> name <+> ":" <+> align typ
 
 compileExpr :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> m Code
 compileExpr expr = do
@@ -413,25 +412,26 @@ compileLetBinder (binder, expr) = do
 compileIdentifier :: Identifier -> Code
 compileIdentifier ident = pretty (nameOf ident :: Name)
 
-compileProperty :: (MonadLeanCompile m) => LeanOptions -> Identifier -> Expr DecidabilityBuiltin -> m Code
-compileProperty opts ident expr = do
+compileProperty ::
+  (MonadLeanCompile m) =>
+  LeanOptions ->
+  Identifier ->
+  Type DecidabilityBuiltin ->
+  Expr DecidabilityBuiltin ->
+  m Code
+-- TODO: Wildcards _ for opts and expr need to be changed when full support is added (GHC gives error when leaving in for now)
+compileProperty _ ident t _ = do
   let propertyName = compileIdentifier ident
-  propertyBody <- compileExpr expr
-  case verificationCache opts of
-    Nothing ->
-      return $ "Axiom" <+> propertyName <+> ":" <+> propertyBody <> "."
-    Just cachePath ->
-      return $
-        annotate (Set.fromList [VehicleImport VehicleValidate], Nothing) $
-          "Lemma"
-            <+> propertyName
-            <+> ":"
-            <+> align propertyBody
-            <> "."
-            <> line
-            <> "Proof. vehicle_validate"
-            <+> dquotes (pretty cachePath)
-            <> ". Qed."
+  propertyType <- compileExpr t
+  -- TODO: Finish later with verification cache / validator tactic (equivalent to Rocq vehicle_validate cachePath)
+  return $
+    "theorem"
+      <+> propertyName
+      <+> ":"
+      <+> propertyType
+      <+> ":= by"
+      <> line
+      <> indent 2 "sorry"
 
 compileTopLevelBinders :: (MonadLeanCompile m) => [Binder DecidabilityBuiltin] -> m [Code]
 compileTopLevelBinders [] = return []
@@ -487,14 +487,14 @@ compileRecordField (field, fieldValue) = do
 
 compileFunDef :: Code -> Code -> [Code] -> Code -> Code
 compileFunDef name t bindings e =
-  "Definition"
+  "def"
     <+> name
     <+> (if null bindings then mempty else hsep bindings <> " ")
     <> ":"
     <+> align t
     <+> ":="
-    <+> e
-    <> "."
+    <> line
+    <> indent 2 e
 
 -- Default precedence for standard operations can be found at https://coq.inria.fr/doc/V8.18.0/refman/language/coq-library.html#notations
 compileBuiltin :: (MonadLeanCompile m) => DecidabilityBuiltin -> [Arg DecidabilityBuiltin] -> m Code
