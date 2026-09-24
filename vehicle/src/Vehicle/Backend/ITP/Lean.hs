@@ -387,9 +387,9 @@ compileExpr expr = do
     App fun args -> compileApp fun args
     Record _p _i fs -> do
       fs' <- traverse compileRecordField fs
-      return $ encloseSep (lbrace <> "|" <> space) (space <> "|" <> rbrace) (semi <> space) fs'
+      return $ encloseSep (lbrace <> space) (space <> rbrace) (comma <> space) fs'
     RecordProj _p _t r field ->
-      compileNotationAndArgs [] NotAssociative Nothing ("$0.(" <> nameOf field <> ")") (Just $ nameOf field) [explicit r]
+      compileNotationAndArgs [] NotAssociative Nothing ("$0." <> nameOf field) (Just $ nameOf field) [explicit r]
   logExit result
   return result
 
@@ -398,7 +398,7 @@ compileType (UniverseLevel l)
   | l == 0 = "Type"
   | otherwise =
       developerError
-        "compilation of higher-level universes to Rocq unsupported"
+        "compilation of higher-level universes to Lean unsupported"
 
 compileLetBinder ::
   (MonadLeanCompile m) =>
@@ -474,7 +474,7 @@ binderBrackets :: Bool -> Visibility -> Code -> Code
 binderBrackets True Explicit {} = id
 binderBrackets False Explicit {} = parens
 binderBrackets _topLevel Implicit {} = braces
-binderBrackets _topLevel Instance {} = braces . braces
+binderBrackets _topLevel Instance {} = brackets
 
 resolveReturnType :: (MonadLeanCompile m) => [Code] -> Expr DecidabilityBuiltin -> m Code
 resolveReturnType (_ : bs) (Pi _ binder r) = addNameToContext binder $ resolveReturnType bs r
@@ -613,7 +613,7 @@ compileBuiltin b args = case b of
           <+> quotePretty (show b)
 
 compileFunctionType :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
-compileFunctionType = compileNotationAndArgs [MathcompImport Boot] RightAssociative (Just 99) "$0 -> $1" (Just "implies")
+compileFunctionType = compileNotationAndArgs [] RightAssociative (Just 99) "$0 -> $1" (Just "implies")
 
 compileApp :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> NonEmpty (Arg DecidabilityBuiltin) -> m Code
 compileApp fun args = case fun of
@@ -656,7 +656,7 @@ compileQuantifierFunction q args = case reverse args of
   (ExplicitArg _ (Lam _ binder body)) : _ -> compileTypeLevelQuantifier q [binder] body
   _ ->
     compilerDeveloperError $
-      "compilation of quantifier" <+> quotePretty q <+> "with args" <+> prettyVerbose args <+> "to Rocq unsupported"
+      "compilation of quantifier" <+> quotePretty q <+> "with args" <+> prettyVerbose args <+> "to Lean unsupported"
 
 compileTypeLevelQuantifier ::
   (MonadLeanCompile m) =>
@@ -667,8 +667,8 @@ compileTypeLevelQuantifier ::
 compileTypeLevelQuantifier q binders body = do
   (cBinders, cBody) <- compileBinders (NonEmpty.toList binders) (compileExpr body)
   quant <- case q of
-    Forall -> return "forall"
-    Exists -> return "exists"
+    Forall -> return "∀"
+    Exists -> return "∃"
   return $ annotate (mempty, Just 200) (quant <+> hsep cBinders <> "," <+> cBody)
 
 operandLevels :: Associativity -> Maybe Precedence -> Int -> [Maybe Precedence]
@@ -687,7 +687,7 @@ bracketArgs argLevels args = traverse bracketArg (zip argLevels args)
     bracketArg (maybeParentPrecedence, arg) = do
       let body = argExpr arg
       return $ case visibilityOf arg of
-        Instance {} -> annotate (mempty, Nothing) $ braces (braces body)
+        Instance {} -> annotate (mempty, Nothing) $ brackets body
         Implicit {} -> annotate (mempty, Nothing) $ braces body
         Explicit {} -> case (getPrecedence body, maybeParentPrecedence) of
           (Just argPrecedence, Just parentPrecedence)
