@@ -1,7 +1,7 @@
-module Vehicle.Backend.ITP.Rocq
-  ( RocqOptions (..),
-    compileProgToRocq,
-    writeRocqFile,
+module Vehicle.Backend.ITP.Lean
+  ( LeanOptions (..),
+    compileProgToLean,
+    writeLeanFile,
   )
 where
 
@@ -43,71 +43,63 @@ import Vehicle.Data.Universe (UniverseLevel (..))
 import Vehicle.Data.Variable.Bound.Context.Name
 
 --------------------------------------------------------------------------------
--- Rocq-specific options
+-- Lean-specific options
 
-data RocqOptions = RocqOptions
+data LeanOptions = LeanOptions
   { verificationCache :: Maybe FilePath,
     output :: Maybe FilePath,
-    moduleName :: Maybe String,
-    constructiveReals :: Bool
+    moduleName :: Maybe String
   }
 
 currentPhase :: Doc ()
-currentPhase = "compilation to Rocq"
+currentPhase = "compilation to Lean"
 
-compileProgToRocq :: (MonadCompile m) => Prog DecidabilityBuiltin -> RocqOptions -> m (Doc a)
-compileProgToRocq prog options =
+compileProgToLean :: (MonadCompile m) => Prog DecidabilityBuiltin -> LeanOptions -> m (Doc a)
+compileProgToLean prog options =
   logCompilerSection2 MinDetail currentPhase $ do
     programDoc <- runFreshNameBoundContextT $ compileProg options prog
     let programStream = layoutPretty defaultLayoutOptions programDoc
     -- Collects dependencies by first discarding precedence info and then
     -- folding using Set Monoid
     let programDependencies = fold (reAnnotateS fst programStream)
-    -- If using constructive reals, add the required import
-    let programDependencies' =
-          if constructiveReals options
-            then
-              Set.insert (MathcompImport Rstruct) $
-                Set.insert (RequireImport ConstructiveReals) programDependencies
-            else programDependencies
 
-    let rocqProgram =
+    let leanProgram =
           unAnnotate
             ( (vsep2 :: [Code] -> Code)
-                [ importStatements programDependencies',
-                  preamble programDependencies',
+                [ importStatements programDependencies,
+                  preamble programDependencies,
                   programDoc
                 ]
             )
 
-    return rocqProgram
+    return leanProgram
 
-writeRocqFile ::
+writeLeanFile ::
   (MonadLogger m, MonadIO m, MonadStdIO m) =>
   Maybe FilePath ->
   Doc a ->
   m ()
-writeRocqFile = writeResultToFile (Just rocqOutputFormat)
+writeLeanFile = writeResultToFile (Just leanOutputFormat)
 
-rocqOutputFormat :: ExternalOutputFormat
-rocqOutputFormat =
+leanOutputFormat :: ExternalOutputFormat
+leanOutputFormat =
   ExternalOutputFormat
-    { formatName = "Rocq",
-      formatVersion = Just $ makeVersion [9, 0, 0],
-      commentStyle = Block "(*" "*)",
+    { formatName = "Lean",
+      formatVersion = Just $ makeVersion [4, 0, 0],
+      commentStyle = Line "--",
       emptyLines = True
     }
 
 --------------------------------------------------------------------------------
 -- Debug functions
 
-logEntry :: (MonadRocqCompile m) => Expr DecidabilityBuiltin -> m ()
+logEntry :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> m ()
 logEntry e = do
   incrCallDepth
   ctx <- getNameContext
   logDebug MaxDetail $ "compile-entry" <+> prettyExternal (WithContext e ctx)
 
-logExit :: (MonadRocqCompile m) => Code -> m ()
+logExit :: (MonadLeanCompile m) => Code -> m ()
 logExit e = do
   logDebug MaxDetail $ "compile-exit " <+> e
   decrCallDepth
@@ -217,7 +209,7 @@ getPrecedence e = maybe (developerError $ "missing annotation for" <+> e) snd (d
 annotateConstant :: [Dependency] -> Code -> Code
 annotateConstant dependencies = annotate (Set.fromList dependencies, Nothing)
 
-compileApplication :: (MonadRocqCompile m) => [Dependency] -> Code -> [Arg DecidabilityBuiltin] -> m Code
+compileApplication :: (MonadLeanCompile m) => [Dependency] -> Code -> [Arg DecidabilityBuiltin] -> m Code
 compileApplication dependencies fun args = do
   (precedence, annDoc) <-
     if null args
@@ -230,7 +222,7 @@ compileApplication dependencies fun args = do
   return $ annotate (Set.fromList dependencies, precedence) annDoc
 
 compileNotationAndArgs ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   [Dependency] ->
   Associativity ->
   Maybe Precedence ->
@@ -281,7 +273,7 @@ insertNotationArgs rawOp as = concatWith (<>) <$> go rawOp
 --------------------------------------------------------------------------------
 -- Monad stack
 
-type MonadRocqCompile m =
+type MonadLeanCompile m =
   ( MonadCompile m,
     MonadNameContext m
   )
@@ -289,12 +281,12 @@ type MonadRocqCompile m =
 --------------------------------------------------------------------------------
 -- Program Compilation
 
-compileProg :: (MonadRocqCompile m) => RocqOptions -> Prog DecidabilityBuiltin -> m Code
+compileProg :: (MonadLeanCompile m) => LeanOptions -> Prog DecidabilityBuiltin -> m Code
 compileProg opts (Main ds) = do
   decls <- catMaybes <$> traverse (compileDecl opts) ds
   return $ vsep2 decls
 
-compileDecl :: (MonadRocqCompile m) => RocqOptions -> Decl DecidabilityBuiltin -> m (Maybe Code)
+compileDecl :: (MonadLeanCompile m) => LeanOptions -> Decl DecidabilityBuiltin -> m (Maybe Code)
 compileDecl opts = \case
   DefAbstract _ n _ t ->
     Just <$> compilePostulate n t
@@ -309,7 +301,7 @@ compileDecl opts = \case
     Just <$> compileRecordDecl p n telescope fields
 
 compileFunctionDecl ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   Identifier ->
   LHSBinderCount ->
   Type DecidabilityBuiltin ->
@@ -323,7 +315,7 @@ compileFunctionDecl ident binderCount t e = do
   return $ compileFunDef (compileIdentifier ident) defType binders' cbody
 
 compileRecordDecl ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   Provenance ->
   Identifier ->
   Telescope DecidabilityBuiltin ->
@@ -362,7 +354,7 @@ extractDeclBinders binderCount typ expr
 
 -- | Compile a 'network' declaration
 compilePostulate ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   Identifier ->
   Type DecidabilityBuiltin ->
   m Code
@@ -371,7 +363,7 @@ compilePostulate ident t = do
   typ <- compileExpr t
   return $ "Parameter" <+> name <+> ":" <+> align typ <> "."
 
-compileExpr :: (MonadRocqCompile m) => Expr DecidabilityBuiltin -> m Code
+compileExpr :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> m Code
 compileExpr expr = do
   logEntry expr
   result <- case expr of
@@ -410,7 +402,7 @@ compileType (UniverseLevel l)
         "compilation of higher-level universes to Rocq unsupported"
 
 compileLetBinder ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   LetBinder (Expr DecidabilityBuiltin) ->
   m Code
 compileLetBinder (binder, expr) = do
@@ -421,7 +413,7 @@ compileLetBinder (binder, expr) = do
 compileIdentifier :: Identifier -> Code
 compileIdentifier ident = pretty (nameOf ident :: Name)
 
-compileProperty :: (MonadRocqCompile m) => RocqOptions -> Identifier -> Expr DecidabilityBuiltin -> m Code
+compileProperty :: (MonadLeanCompile m) => LeanOptions -> Identifier -> Expr DecidabilityBuiltin -> m Code
 compileProperty opts ident expr = do
   let propertyName = compileIdentifier ident
   propertyBody <- compileExpr expr
@@ -441,7 +433,7 @@ compileProperty opts ident expr = do
             <+> dquotes (pretty cachePath)
             <> ". Qed."
 
-compileTopLevelBinders :: (MonadRocqCompile m) => [Binder DecidabilityBuiltin] -> m [Code]
+compileTopLevelBinders :: (MonadLeanCompile m) => [Binder DecidabilityBuiltin] -> m [Code]
 compileTopLevelBinders [] = return []
 compileTopLevelBinders (b : bs) = do
   b' <- compileTopLevelBinder b
@@ -451,7 +443,7 @@ compileTopLevelBinders (b : bs) = do
       bsc <- compileTopLevelBinders bs
       return $ bc : bsc
 
-compileTopLevelBinder :: (MonadRocqCompile m) => Binder DecidabilityBuiltin -> m (Maybe Code)
+compileTopLevelBinder :: (MonadLeanCompile m) => Binder DecidabilityBuiltin -> m (Maybe Code)
 compileTopLevelBinder binder
   | visibilityOf binder /= Explicit = pure Nothing
   | otherwise = do
@@ -459,14 +451,14 @@ compileTopLevelBinder binder
       binderType <- compileExpr (typeOf binder)
       pure . Just . parens $ binderName <+> ":" <+> binderType
 
-compileBinders :: (MonadRocqCompile m) => [Binder DecidabilityBuiltin] -> m Code -> m ([Code], Code)
+compileBinders :: (MonadLeanCompile m) => [Binder DecidabilityBuiltin] -> m Code -> m ([Code], Code)
 compileBinders [] c = ([],) <$> c
 compileBinders (b : bs) c = do
   (cbs, cc) <- addNameToContext b $ compileBinders bs c
   cb <- compileBinder b
   return (cb : cbs, cc)
 
-compileBinder :: (MonadRocqCompile m) => Binder DecidabilityBuiltin -> m Code
+compileBinder :: (MonadLeanCompile m) => Binder DecidabilityBuiltin -> m Code
 compileBinder binder = do
   binderType <- compileExpr (typeOf binder)
   (binderDoc, noExplicitBrackets) <- case binderNamingForm binder of
@@ -484,11 +476,11 @@ binderBrackets False Explicit {} = parens
 binderBrackets _topLevel Implicit {} = braces
 binderBrackets _topLevel Instance {} = braces . braces
 
-resolveReturnType :: (MonadRocqCompile m) => [Code] -> Expr DecidabilityBuiltin -> m Code
+resolveReturnType :: (MonadLeanCompile m) => [Code] -> Expr DecidabilityBuiltin -> m Code
 resolveReturnType (_ : bs) (Pi _ binder r) = addNameToContext binder $ resolveReturnType bs r
 resolveReturnType _ e = compileExpr e
 
-compileRecordField :: (MonadRocqCompile m) => GenericRecordField (Expr DecidabilityBuiltin) -> m Code
+compileRecordField :: (MonadLeanCompile m) => GenericRecordField (Expr DecidabilityBuiltin) -> m Code
 compileRecordField (field, fieldValue) = do
   fieldValue' <- compileExpr fieldValue
   return $ pretty field <+> ":=" <+> fieldValue'
@@ -505,7 +497,7 @@ compileFunDef name t bindings e =
     <> "."
 
 -- Default precedence for standard operations can be found at https://coq.inria.fr/doc/V8.18.0/refman/language/coq-library.html#notations
-compileBuiltin :: (MonadRocqCompile m) => DecidabilityBuiltin -> [Arg DecidabilityBuiltin] -> m Code
+compileBuiltin :: (MonadLeanCompile m) => DecidabilityBuiltin -> [Arg DecidabilityBuiltin] -> m Code
 compileBuiltin b args = case b of
   StandardBuiltinType t -> case t of
     BoolType -> return $ compileType (UniverseLevel 0)
@@ -620,10 +612,10 @@ compileBuiltin b args = case b of
         "Monomorphisation should have got rid of"
           <+> quotePretty (show b)
 
-compileFunctionType :: (MonadRocqCompile m) => [Arg DecidabilityBuiltin] -> m Code
+compileFunctionType :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 compileFunctionType = compileNotationAndArgs [MathcompImport Boot] RightAssociative (Just 99) "$0 -> $1" (Just "implies")
 
-compileApp :: (MonadRocqCompile m) => Expr DecidabilityBuiltin -> NonEmpty (Arg DecidabilityBuiltin) -> m Code
+compileApp :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> NonEmpty (Arg DecidabilityBuiltin) -> m Code
 compileApp fun args = case fun of
   Builtin _p b -> do
     let userArgs = builtinAppArgs b args
@@ -633,7 +625,7 @@ compileApp fun args = case fun of
     cFun <- compileExpr fun
     compileApplication [] cFun userArgs
 
-compileDerivedFunction :: (MonadRocqCompile m) => DerivedFunction -> [Arg DecidabilityBuiltin] -> m Code
+compileDerivedFunction :: (MonadLeanCompile m) => DerivedFunction -> [Arg DecidabilityBuiltin] -> m Code
 compileDerivedFunction fn args = case fn of
   QuantifyIndex q -> case q of
     Exists -> compileApplication [VehicleImport VehicleUtils] "existsIndex" args
@@ -659,7 +651,7 @@ compileDerivedFunction fn args = case fn of
       App (Builtin _ (StandardBuiltinConstructor (IndexLiteral n))) _ -> Just n
       _ -> Nothing
 
-compileQuantifierFunction :: (MonadRocqCompile m) => Quantifier -> [Arg DecidabilityBuiltin] -> m Code
+compileQuantifierFunction :: (MonadLeanCompile m) => Quantifier -> [Arg DecidabilityBuiltin] -> m Code
 compileQuantifierFunction q args = case reverse args of
   (ExplicitArg _ (Lam _ binder body)) : _ -> compileTypeLevelQuantifier q [binder] body
   _ ->
@@ -667,7 +659,7 @@ compileQuantifierFunction q args = case reverse args of
       "compilation of quantifier" <+> quotePretty q <+> "with args" <+> prettyVerbose args <+> "to Rocq unsupported"
 
 compileTypeLevelQuantifier ::
-  (MonadRocqCompile m) =>
+  (MonadLeanCompile m) =>
   Quantifier ->
   NonEmpty (Binder DecidabilityBuiltin) ->
   Expr DecidabilityBuiltin ->
@@ -688,10 +680,10 @@ operandLevels associativity precedence numArgs =
       RightAssociative -> index == numArgs - 1
       NotAssociative -> False
 
-bracketArgs :: (MonadRocqCompile m) => [Maybe Precedence] -> [GenericArg Code] -> m [Code]
+bracketArgs :: (MonadLeanCompile m) => [Maybe Precedence] -> [GenericArg Code] -> m [Code]
 bracketArgs argLevels args = traverse bracketArg (zip argLevels args)
   where
-    bracketArg :: (MonadRocqCompile m) => (Maybe Precedence, GenericArg Code) -> m Code
+    bracketArg :: (MonadLeanCompile m) => (Maybe Precedence, GenericArg Code) -> m Code
     bracketArg (maybeParentPrecedence, arg) = do
       let body = argExpr arg
       return $ case visibilityOf arg of
@@ -717,7 +709,7 @@ compileNatLiteral i = annotateConstant [MathcompImport Boot] $ pretty i <> "%N"
 
 -- | Compile a tensor type using mathcomp's shorthand notations:
 -- 'sT[R] for the scalar 0-dim case, 'nT[R]_[n1, .., nk] otherwise.
-compileTensorType :: (MonadRocqCompile m) => [Arg DecidabilityBuiltin] -> m Code
+compileTensorType :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 compileTensorType args = case getExpr accessSpine args of
   Just (TensorTypeArgs elemTypeArg dimsArg) -> do
     elemType <- compileExpr elemTypeArg
@@ -742,17 +734,17 @@ compileTensorType args = case getExpr accessSpine args of
 -- the `'nT[R]_[n1, .., nk]` notation, which wraps each element with
 -- `%:posnat`. Non-literal entries (e.g. a let-bound or parameter `n`)
 -- fall through to `compileExpr`.
-compileDimList :: (MonadRocqCompile m) => Expr DecidabilityBuiltin -> m [Code]
+compileDimList :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> m [Code]
 compileDimList = go []
   where
-    go :: (MonadRocqCompile m) => [Code] -> Expr DecidabilityBuiltin -> m [Code]
+    go :: (MonadLeanCompile m) => [Code] -> Expr DecidabilityBuiltin -> m [Code]
     go acc = \case
       INil _ -> return (reverse acc)
       ICons _ x xs -> do
         x' <- compileDimElem x
         go (x' : acc) xs
       _ -> developerError "compileDimList: dimension list is not a Cons/Nil chain"
-    compileDimElem :: (MonadRocqCompile m) => Expr DecidabilityBuiltin -> m Code
+    compileDimElem :: (MonadLeanCompile m) => Expr DecidabilityBuiltin -> m Code
     compileDimElem (INatLiteral n) = return $ pretty n
     compileDimElem e = compileExpr e
 
@@ -780,7 +772,7 @@ compileRealLiteral = \case
     parens $ annotate ([MathcompImport Reals, MathcompImport Algebra, Open RingScope], Nothing) rat
   _ -> developerError "Compiling infinite values to Rocq not supported"
 
-compileLam :: (MonadRocqCompile m) => Binder DecidabilityBuiltin -> Expr DecidabilityBuiltin -> m Code
+compileLam :: (MonadLeanCompile m) => Binder DecidabilityBuiltin -> Expr DecidabilityBuiltin -> m Code
 compileLam binder expr = do
   let (binders, body) = foldLamBinders binder expr
   (cBinders, cBody) <- compileBinders (binder : binders) (compileExpr body)
@@ -792,7 +784,7 @@ data ComparisonDomain
   | CRatTensor
   deriving (Eq)
 
-compileComparison :: (MonadRocqCompile m) => ComparisonDomain -> ComparisonOp -> [Arg DecidabilityBuiltin] -> m Code
+compileComparison :: (MonadLeanCompile m) => ComparisonDomain -> ComparisonOp -> [Arg DecidabilityBuiltin] -> m Code
 compileComparison domain op = do
   let (opDoc, dependencies) = case op of
         Le -> ("<=", orderDeps)
@@ -816,17 +808,17 @@ compileComparison domain op = do
     orderDeps = [VehicleImport VehicleUtils, MathcompImport Boot, Open OrderScope]
     eqDeps = [MathcompImport Boot]
 
-compileStack :: (MonadRocqCompile m) => [Arg DecidabilityBuiltin] -> m Code
+compileStack :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 compileStack args = do
   vecExpr <- toVec args
   return $ annotate ([MathcompImport Algebra], functionApplicationPrecedence) $ "nstack_tuple (x := " <> pretty (length args) <> "%:posnat)" <+> vecExpr
 
-compileVecLiteral :: (MonadRocqCompile m) => [Arg DecidabilityBuiltin] -> m Code
+compileVecLiteral :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 compileVecLiteral xs = case getExpr accessSpine xs of
   Just (VectorLitArgs _t _d ds) -> toVec (fmap explicit ds)
   Nothing -> developerError "Malformed type-checked vector literal"
 
-toVec :: (MonadRocqCompile m) => [Arg DecidabilityBuiltin] -> m Code
+toVec :: (MonadLeanCompile m) => [Arg DecidabilityBuiltin] -> m Code
 toVec xs = do
   let text = layoutAsText $ "[tuple" <+> concatWith (surround "; ") ["$" <> pretty x | x <- [0 .. length xs - 1]] <> "]"
   compileNotationAndArgs [MathcompImport Boot, Open FormScope] NotAssociative Nothing text Nothing xs
